@@ -12,6 +12,9 @@ build/
 .coverage
 htmlcov/
 
+# Poetry project plugins (installed by `poetry install`)
+.poetry/
+
 # Virtual environments
 .venv/
 venv/
