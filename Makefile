@@ -52,9 +52,9 @@ typecheck:
 	$(RUN) mypy
 
 .PHONY: test
-## Run the tests with a coverage report (PYTEST_ARGS="-k name" narrows them).
+## Run the tests; coverage goes to the terminal, coverage.xml and htmlcov/ (PYTEST_ARGS="-k name" narrows them).
 test:
-	$(RUN) pytest --cov=webhook_gateway --cov-report=term-missing $(PYTEST_ARGS)
+	$(RUN) pytest --cov=webhook_gateway --cov-report=term-missing --cov-report=xml --cov-report=html $(PYTEST_ARGS)
 
 .PHONY: check
 ## Run lint, typecheck and test; stops at the first that fails.

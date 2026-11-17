@@ -1,4 +1,5 @@
 # Webhook Gateway
+[![CI](https://github.com/Cwazycodes/multi-provider-webhook-gateway/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Cwazycodes/multi-provider-webhook-gateway/actions/workflows/ci.yml?query=branch%3Amain)
 
 A secure, reliable webhook gateway built with Python.
 
