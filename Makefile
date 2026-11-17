@@ -26,7 +26,7 @@ help:
 	@awk '/^## / { description = substr($$0, 4); next } \
 		/^[a-zA-Z0-9_-]+:/ { \
 			split($$0, target, ":"); \
-			if (description != "") printf "  make %-10s %s\n", target[1], description; \
+			if (description != "") printf "  make %-14s %s\n", target[1], description; \
 			description = "" \
 		}' $(MAKEFILE_LIST)
 .PHONY: install
@@ -59,3 +59,13 @@ test:
 .PHONY: check
 ## Run lint, typecheck and test; stops at the first that fails.
 check: lint typecheck test
+
+.PHONY: hooks
+## Install the git hooks (ruff, mypy, file checks, gitleaks); once per clone.
+hooks:
+	$(RUN) pre-commit install --install-hooks
+
+.PHONY: scan-secrets
+## Scan every commit in the git history for secrets with gitleaks.
+scan-secrets:
+	$(RUN) pre-commit run gitleaks-history --hook-stage manual --verbose

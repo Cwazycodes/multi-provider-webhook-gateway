@@ -17,9 +17,9 @@ ships Make 3.81, which the Makefile refuses: run `brew install make` and put
 
 ```bash
 make install   # once, after cloning
+make hooks     # once, after cloning: checks and secret-scans every commit
 make check     # lint, typecheck and test
 make help      # every other command
 ```
 
 Every command in this repo is a make target, so `make help` is the full list.
-

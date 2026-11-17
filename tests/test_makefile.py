@@ -9,7 +9,17 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 MAKEFILE = ROOT / "Makefile"
-REQUIRED_TARGETS = {"help", "install", "fmt", "lint", "typecheck", "test", "check"}
+REQUIRED_TARGETS = {
+    "help",
+    "install",
+    "fmt",
+    "lint",
+    "typecheck",
+    "test",
+    "check",
+    "hooks",
+    "scan-secrets",
+}
 
 # A parent make (`make test` runs pytest) exports these, and a shell may export
 # the AWS ones. Any of them would change what the make under test does.
