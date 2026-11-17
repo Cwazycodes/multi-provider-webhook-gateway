@@ -128,3 +128,10 @@ def test_aws_targets_run_with_explicit_stage_and_profile(probes: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert "would reach AWS: dev as webhook-dev" in result.stdout
+
+
+def test_test_target_writes_the_coverage_xml_ci_uploads() -> None:
+    dry_run = run_make("--dry-run", "test")
+
+    assert dry_run.returncode == 0, dry_run.stderr
+    assert "--cov-report=xml" in dry_run.stdout

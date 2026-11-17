@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# The token can read the repo and nothing else.
+permissions:
+  contents: read
+
+jobs:
+  # The ruleset on main requires this job by name, so keep it called "check".
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repo with all history, for gitleaks
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Poetry
+        run: pipx install poetry==2.5.1
+
+      - name: Set up Python from .python-version and cache the Poetry venv
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: .python-version
+          cache: poetry
+
+      - name: Cache the pre-commit environments, where gitleaks is built
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml', '.python-version') }}
+
+      - run: make install
+      - run: make scan-secrets
+      - run: make check
+
+      - name: Upload the coverage report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage
+          path: |
+            coverage.xml
+            htmlcov/
+          if-no-files-found: error
