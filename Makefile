@@ -69,3 +69,8 @@ hooks:
 ## Scan every commit in the git history for secrets with gitleaks.
 scan-secrets:
 	$(RUN) pre-commit run gitleaks-history --hook-stage manual --verbose
+
+.PHONY: schema
+## Regenerate schemas/envelope.v1.json from the Envelope model; commit the result.
+schema:
+	$(RUN) python -m webhook_gateway.common.write_schema schemas/envelope.v1.json
