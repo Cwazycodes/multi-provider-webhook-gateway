@@ -15,6 +15,10 @@ RUN := poetry run
 # Extra pytest arguments, e.g. make test PYTEST_ARGS="-k makefile".
 PYTEST_ARGS ?=
 
+# Arguments for make generate, e.g. GENERATE_ARGS="--provider stripe --count 5".
+GENERATE_ARGS ?=
+
+
 # The first line of every recipe that talks to AWS. STAGE and AWS_PROFILE must
 # be given on the make command line and not be empty. Values exported in your
 # shell don't count, so a leftover `export AWS_PROFILE=...` can't aim a command.
@@ -74,3 +78,8 @@ scan-secrets:
 ## Regenerate schemas/envelope.v1.json from the Envelope model; commit the result.
 schema:
 	$(RUN) python -m webhook_gateway.common.write_schema schemas/envelope.v1.json
+
+.PHONY: generate
+## Print signed synthetic webhooks as JSON Lines; needs SIGNING_SECRET (GENERATE_ARGS="--provider stripe").
+generate:
+	@$(RUN) python -m webhook_gateway.synthetic.cli $(GENERATE_ARGS)

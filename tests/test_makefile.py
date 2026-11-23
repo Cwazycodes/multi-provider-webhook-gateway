@@ -20,6 +20,7 @@ REQUIRED_TARGETS = {
     "hooks",
     "scan-secrets",
     "schema",
+    "generate",
 }
 
 # A parent make (`make test` runs pytest) exports these, and a shell may export
