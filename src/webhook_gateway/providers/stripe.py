@@ -1,16 +1,36 @@
-"""Stripe: Stripe-Signature is t=<seconds>,v1=<hex HMAC-SHA256 of "<t>.<raw body>">."""
+"""Stripe: verifying Stripe-Signature, and normalising payment intent and charge events."""
 
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Annotated
 
+from pydantic import Field, JsonValue, StringConstraints
+
+from webhook_gateway.common.envelope import Envelope, EventType, NonEmptyStr, Provider
 from webhook_gateway.common.errors import SignatureError
+from webhook_gateway.providers.normalising import (
+    PayloadModel,
+    Receipt,
+    UnixSeconds,
+    build_envelope,
+    from_unix,
+    parse,
+    unhandled,
+)
 from webhook_gateway.providers.signatures import SignedRequest, signed_by_any
 
 HEADER = "Stripe-Signature"
 # ASCII digits only: int() would also take "1_763", "+1763", " 1763" and other scripts' digits.
 _SECONDS = re.compile(r"[0-9]+")
+PAYMENT_INTENT_TYPES = {
+    "payment_intent.succeeded": EventType.PAYMENT_SUCCEEDED,
+    "payment_intent.payment_failed": EventType.PAYMENT_FAILED,
+}
+
+MinorUnits = Annotated[int, Field(ge=0)]  # 1999 is £19.99
+Currency = Annotated[str, StringConstraints(pattern=r"^[a-z]{3}$")]
 
 
 @dataclass(frozen=True)
@@ -42,3 +62,91 @@ def _parse(header: str) -> tuple[str, list[str]]:
     if len(timestamps) != 1 or not _SECONDS.fullmatch(timestamps[0]) or not signatures:
         raise SignatureError(f"{HEADER} isn't t=<seconds>,v1=<hex>")
     return timestamps[0], signatures
+
+
+class StripeEvent(PayloadModel):
+    """What every Stripe event has, handled or not."""
+
+    id: NonEmptyStr
+    type: NonEmptyStr
+    created: UnixSeconds
+
+
+class PaymentError(PayloadModel):
+    code: NonEmptyStr
+
+
+class PaymentIntent(PayloadModel):
+    id: NonEmptyStr
+    amount: MinorUnits
+    currency: Currency
+    status: NonEmptyStr
+    last_payment_error: PaymentError | None = None
+
+
+class PaymentIntentData(PayloadModel):
+    object: PaymentIntent
+
+
+class PaymentIntentEvent(StripeEvent):
+    data: PaymentIntentData
+
+
+class Charge(PayloadModel):
+    id: NonEmptyStr
+    amount_refunded: MinorUnits
+    currency: Currency
+    payment_intent: NonEmptyStr  # the subject: a refund is about the payment
+
+
+class ChargeData(PayloadModel):
+    object: Charge
+
+
+class ChargeEvent(StripeEvent):
+    data: ChargeData
+
+
+def normalise(request: SignedRequest, receipt: Receipt) -> Envelope:
+    event = parse(StripeEvent, request.body)
+    occurred_at = from_unix(event.created)
+    if event.type in PAYMENT_INTENT_TYPES:
+        intent = parse(PaymentIntentEvent, request.body).data.object
+        data: dict[str, JsonValue] = {
+            "amount": intent.amount,
+            "currency": intent.currency.upper(),
+            "status": intent.status,
+        }
+        if intent.last_payment_error is not None:
+            data["failure_code"] = intent.last_payment_error.code
+        return build_envelope(
+            Provider.STRIPE,
+            receipt,
+            provider_event_id=event.id,
+            event_type=PAYMENT_INTENT_TYPES[event.type],
+            subject_id=f"stripe:{intent.id}",
+            occurred_at=occurred_at,
+            data=data,
+        )
+    if event.type == "charge.refunded":
+        charge = parse(ChargeEvent, request.body).data.object
+        return build_envelope(
+            Provider.STRIPE,
+            receipt,
+            provider_event_id=event.id,
+            event_type=EventType.PAYMENT_REFUNDED,
+            subject_id=f"stripe:{charge.payment_intent}",
+            occurred_at=occurred_at,
+            data={
+                "charge": charge.id,
+                "amount_refunded": charge.amount_refunded,
+                "currency": charge.currency.upper(),
+            },
+        )
+    return unhandled(
+        Provider.STRIPE,
+        receipt,
+        provider_event_id=event.id,
+        provider_type=event.type,
+        occurred_at=occurred_at,
+    )

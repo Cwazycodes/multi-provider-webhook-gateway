@@ -40,7 +40,11 @@ class EventType(StrEnum):
 
 
 def _to_utc(moment: datetime) -> datetime:
-    return moment.astimezone(UTC)
+    try:
+        return moment.astimezone(UTC)
+    except OverflowError:
+        # e.g. 0001-01-01T00:00:00+05:00: valid, but before year 1 once in UTC.
+        raise ValueError("is outside the range of a UTC datetime") from None
 
 
 def _fixed_width(moment: datetime) -> str:

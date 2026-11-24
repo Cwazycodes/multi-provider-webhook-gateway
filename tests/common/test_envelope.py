@@ -123,6 +123,15 @@ def test_other_utc_offsets_are_converted_to_utc() -> None:
     assert envelope.occurred_at.tzinfo is UTC
 
 
+@pytest.mark.parametrize("moment", ["0001-01-01T00:00:00+05:00", "9999-12-31T23:59:59-05:00"])
+def test_a_time_outside_the_utc_range_is_rejected_not_a_crash(moment: str) -> None:
+    # Both are valid aware datetimes, but in UTC one is before year 1 and one after 9999.
+    with pytest.raises(ValidationError) as exc_info:
+        from_json(VALID_JSON | {"occurred_at": moment})
+
+    assert errors_of(exc_info) == [("value_error", ("occurred_at",))]
+
+
 def test_unknown_fields_are_rejected() -> None:
     with pytest.raises(ValidationError) as exc_info:
         from_json(VALID_JSON | {"amount": 1999})
