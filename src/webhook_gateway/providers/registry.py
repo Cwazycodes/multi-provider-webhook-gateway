@@ -1,15 +1,24 @@
-"""Which verifier checks each provider's requests: one entry per provider."""
+"""Every provider the gateway accepts: adding one means one module and one entry here."""
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 
 from webhook_gateway.common.envelope import Provider
-from webhook_gateway.providers.github import GitHubVerifier
-from webhook_gateway.providers.shopify import ShopifyVerifier
+from webhook_gateway.providers import github, shopify, stripe
+from webhook_gateway.providers.normalising import Normaliser
 from webhook_gateway.providers.signatures import Verifier
-from webhook_gateway.providers.stripe import StripeVerifier
 
-VERIFIERS: Mapping[Provider, Verifier] = {
-    Provider.GITHUB: GitHubVerifier(),
-    Provider.SHOPIFY: ShopifyVerifier(),
-    Provider.STRIPE: StripeVerifier(),
+
+@dataclass(frozen=True)
+class ProviderAdapter:
+    """What the gateway needs from a provider's module: how to verify and how to normalise."""
+
+    verifier: Verifier
+    normalise: Normaliser
+
+
+PROVIDERS: Mapping[Provider, ProviderAdapter] = {
+    Provider.GITHUB: ProviderAdapter(github.GitHubVerifier(), github.normalise),
+    Provider.SHOPIFY: ProviderAdapter(shopify.ShopifyVerifier(), shopify.normalise),
+    Provider.STRIPE: ProviderAdapter(stripe.StripeVerifier(), stripe.normalise),
 }

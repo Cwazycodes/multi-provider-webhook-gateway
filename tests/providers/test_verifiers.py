@@ -15,7 +15,7 @@ from hypothesis import strategies as st
 
 from webhook_gateway.common.envelope import Provider
 from webhook_gateway.common.errors import SignatureError
-from webhook_gateway.providers.registry import VERIFIERS
+from webhook_gateway.providers.registry import PROVIDERS
 from webhook_gateway.providers.signatures import SignedRequest
 from webhook_gateway.synthetic.formats import apigw_event
 from webhook_gateway.synthetic.generator import FAKES, Fault, FaultRates, generate
@@ -87,7 +87,7 @@ def verify(
     secrets: Sequence[str] = (SECRET,),
     now: datetime = SIGNED_AT,
 ) -> None:
-    VERIFIERS[provider].verify(SignedRequest.of(headers, body), secrets, now)
+    PROVIDERS[provider].verifier.verify(SignedRequest.of(headers, body), secrets, now)
 
 
 def stripe_header(header: str, *, now: datetime = SIGNED_AT) -> None:
@@ -95,7 +95,7 @@ def stripe_header(header: str, *, now: datetime = SIGNED_AT) -> None:
 
 
 def test_every_provider_has_a_verifier() -> None:
-    assert set(VERIFIERS) == set(Provider)
+    assert set(PROVIDERS) == set(Provider)
 
 
 @pytest.mark.parametrize(("provider", "body", "signature"), KNOWN_ANSWERS)
@@ -257,7 +257,7 @@ def test_generated_traffic_verifies_unless_its_signature_is_the_fault(
         provider, signing_secret, count=500, seed=11, start=start, faults=rates
     ):
         request = SignedRequest.from_apigw_event(apigw_event(delivery))
-        verifier = VERIFIERS[provider]
+        verifier = PROVIDERS[provider].verifier
         if delivery.fault in {Fault.BAD_SIGNATURE, Fault.STALE_TIMESTAMP}:
             with pytest.raises(SignatureError):
                 verifier.verify(request, [signing_secret], delivery.sent_at)
@@ -275,7 +275,7 @@ def test_a_base64_encoded_body_verifies_only_once_decoded(
     event = apigw_event(delivery) | {"body": encoded, "isBase64Encoded": True}
 
     decoded = SignedRequest.from_apigw_event(event)
-    VERIFIERS[provider].verify(decoded, [signing_secret], delivery.sent_at)
+    PROVIDERS[provider].verifier.verify(decoded, [signing_secret], delivery.sent_at)
     as_text = SignedRequest.of(event["headers"], encoded.encode())
     with pytest.raises(SignatureError):
-        VERIFIERS[provider].verify(as_text, [signing_secret], delivery.sent_at)
+        PROVIDERS[provider].verifier.verify(as_text, [signing_secret], delivery.sent_at)
