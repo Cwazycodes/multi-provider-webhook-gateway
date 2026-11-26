@@ -1,0 +1,5 @@
+# Read by cfn-lint, whether make lint or the pre-commit hook runs it.
+templates:
+  - template.yaml
+regions:
+  - eu-west-2

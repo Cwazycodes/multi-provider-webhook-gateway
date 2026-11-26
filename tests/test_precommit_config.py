@@ -1,5 +1,6 @@
 """Guards for the pre-commit hooks set up in WG-05."""
 
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -14,8 +15,9 @@ REQUIRED_HOOKS = {
     "end-of-file-fixer",
     "check-yaml",
     "gitleaks",
+    "cfn-lint",
 }
-PYTHON_HOOKS = {"ruff-check", "ruff-format", "mypy"}
+PYTHON_HOOKS = {"ruff-check", "ruff-format", "mypy", "cfn-lint"}
 
 
 def all_hooks() -> list[dict[str, Any]]:
@@ -51,6 +53,13 @@ def test_check_yaml_accepts_cloudformation_tags() -> None:
 def test_python_hooks_use_the_locked_tools() -> None:
     for hook_id in PYTHON_HOOKS:
         assert commit_hooks()[hook_id]["entry"].startswith("poetry run "), hook_id
+
+
+def test_cfn_lint_runs_whenever_the_template_changes() -> None:
+    hook = commit_hooks()["cfn-lint"]
+
+    assert re.fullmatch(hook["files"], "template.yaml")
+    assert hook["pass_filenames"] is False  # .cfnlintrc.yaml names the templates
 
 
 def test_history_scan_hook_runs_only_on_demand() -> None:

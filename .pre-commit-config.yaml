@@ -9,8 +9,8 @@ repos:
         # Check syntax only, so CloudFormation tags like !Ref in template.yaml pass.
         args: [--unsafe]
 
-  # The project's own ruff and mypy from poetry.lock, so a commit is checked
-  # exactly as `make lint` and `make typecheck` check it.
+  # The project's own ruff, mypy and cfn-lint from poetry.lock, so a commit 
+  # is checked exactly as make lint and make typecheck check it.
   - repo: local
     hooks:
       - id: ruff-check
@@ -29,6 +29,12 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+      - id: cfn-lint
+        name: cfn-lint
+        entry: poetry run cfn-lint
+        language: system
+        files: ^template\.yaml$
+        pass_filenames: false
 
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.30.0
