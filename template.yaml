@@ -82,7 +82,6 @@ Resources:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub /aws/lambda/webhook-gateway-${Stage}-ingest
-      RetentionInDays: 7
       Tags:
         - Key: project
           Value: webhook-gateway
