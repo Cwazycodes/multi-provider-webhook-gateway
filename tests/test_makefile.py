@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 MAKEFILE = ROOT / "Makefile"
@@ -97,7 +98,7 @@ def test_check_runs_lint_typecheck_and_test() -> None:
     dry_run = run_make("--dry-run", "check")
 
     assert dry_run.returncode == 0, dry_run.stderr
-    for command in ("ruff check", "ruff format --check", "mypy", "pytest"):
+    for command in ("ruff check", "ruff format --check", "cfn-lint", "mypy", "pytest"):
         assert command in dry_run.stdout
 
 
@@ -178,3 +179,9 @@ def test_the_exported_requirements_are_never_committed() -> None:
     )
 
     assert ignored.returncode == 0
+
+
+def test_cfn_lint_checks_the_template_against_our_region() -> None:
+    config = yaml.safe_load((ROOT / ".cfnlintrc.yaml").read_text())
+
+    assert config == {"templates": ["template.yaml"], "regions": ["eu-west-2"]}

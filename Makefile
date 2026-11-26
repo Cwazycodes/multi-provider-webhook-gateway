@@ -52,10 +52,11 @@ fmt:
 	$(RUN) ruff format .
 
 .PHONY: lint
-## Lint with Ruff, and fail on code that make fmt would change.
+## Lint with Ruff and cfn-lint, and fail on code that make fmt would change.
 lint:
 	$(RUN) ruff check .
 	$(RUN) ruff format --check .
+	$(RUN) cfn-lint
 
 .PHONY: typecheck
 ## Type-check src/ and tests/ with strict mypy.

@@ -1,49 +1,29 @@
-"""Guardrails over template.yaml: every cost and safety rule the design note sets (WG-13)."""
+"""How template.yaml is wired: the specifics the guardrails' general rules don't cover (WG-13)."""
 
 import importlib
 import json
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
-import yaml
+from cfnlint.decode import decode_str
 
 from webhook_gateway.common.settings import Settings
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE = ROOT / "template.yaml"
-TAG = {"Key": "project", "Value": "webhook-gateway"}
-
-
-class CloudFormationLoader(yaml.SafeLoader):
-    """Reads CloudFormation's short forms (!Ref, !Sub, !GetAtt) as their long forms."""
-
-
-def _intrinsic(loader: yaml.SafeLoader, suffix: str, node: yaml.Node) -> dict[str, Any]:
-    value: Any
-    if isinstance(node, yaml.ScalarNode):
-        value = loader.construct_scalar(node)
-    elif isinstance(node, yaml.SequenceNode):
-        value = loader.construct_sequence(node, deep=True)
-    elif isinstance(node, yaml.MappingNode):
-        value = loader.construct_mapping(node, deep=True)
-    if suffix == "GetAtt" and isinstance(value, str):
-        value = value.split(".", 1)
-    return {"Ref" if suffix == "Ref" else f"Fn::{suffix}": value}
-
-
-CloudFormationLoader.add_multi_constructor("!", _intrinsic)
 
 
 def template() -> dict[str, Any]:
-    loaded: dict[str, Any] = yaml.load(TEMPLATE.read_text(), Loader=CloudFormationLoader)
+    decoded, matches = decode_str(TEMPLATE.read_text())
+    assert decoded is not None, matches
+    loaded: dict[str, Any] = decoded
     return loaded
 
 
-def resources(kind: str | None = None) -> dict[str, dict[str, Any]]:
+def resources(kind: str) -> dict[str, dict[str, Any]]:
     found: dict[str, dict[str, Any]] = template()["Resources"]
-    return {name: r for name, r in found.items() if kind is None or r["Type"] == kind}
+    return {name: r for name, r in found.items() if r["Type"] == kind}
 
 
 def properties(name: str) -> dict[str, Any]:
@@ -62,29 +42,8 @@ def default(value: Any) -> Any:
     return value
 
 
-def keys(value: Any) -> Iterator[str]:
-    """Every mapping key anywhere in the template."""
-    if isinstance(value, dict):
-        for key, item in value.items():
-            yield key
-            yield from keys(item)
-    elif isinstance(value, list):
-        for item in value:
-            yield from keys(item)
-
-
 def test_it_is_a_sam_template() -> None:
     assert template()["Transform"] == "AWS::Serverless-2016-10-31"
-
-
-# HTTP API, not REST API ---------------------------------------------------------------
-
-
-def test_the_only_api_is_an_http_api() -> None:
-    types = {r["Type"] for r in resources().values()}
-
-    assert "AWS::Serverless::HttpApi" in types
-    assert not types & {"AWS::Serverless::Api", "AWS::ApiGateway::RestApi"}
 
 
 def test_ingest_is_routed_from_post_webhooks_provider() -> None:
@@ -101,7 +60,7 @@ def test_ingest_is_routed_from_post_webhooks_provider() -> None:
     }
 
 
-# API throttling ---------------------------------------------------------------------
+# The design note's numbers (section 9) ------------------------------------------------
 
 
 def test_the_api_is_throttled_to_20_a_second_with_bursts_of_40() -> None:
@@ -111,17 +70,12 @@ def test_the_api_is_throttled_to_20_a_second_with_bursts_of_40() -> None:
     assert default(route["ThrottlingBurstLimit"]) == 40
 
 
-# arm64, reserved concurrency, short timeout ----------------------------------------------
-
-
-def test_functions_run_the_projects_python_on_arm64() -> None:
-    function_globals = template()["Globals"]["Function"]
+def test_functions_run_the_projects_python() -> None:
     version = (ROOT / ".python-version").read_text().strip()
 
-    assert function_globals["Runtime"] == f"python{version}"
-    assert function_globals["Architectures"] == ["arm64"]
+    assert template()["Globals"]["Function"]["Runtime"] == f"python{version}"
     for name, props in functions().items():
-        assert not {"Runtime", "Architectures"} & set(props), name
+        assert "Runtime" not in props, name
 
 
 def test_ingest_answers_within_5_seconds_on_256_mb() -> None:
@@ -131,14 +85,8 @@ def test_ingest_answers_within_5_seconds_on_256_mb() -> None:
     assert not {"Timeout", "MemorySize"} & set(functions()["IngestFunction"])
 
 
-def test_every_function_has_a_reserved_concurrency_cap() -> None:
-    for name, props in functions().items():
-        assert "ReservedConcurrentExecutions" in props, name
-
+def test_ingest_reserves_10_concurrent_executions() -> None:
     assert default(functions()["IngestFunction"]["ReservedConcurrentExecutions"]) == 10
-
-
-# Queues ----------------------------------------------------------------------------------
 
 
 def test_the_main_queue_moves_a_message_to_the_dlq_after_5_receives() -> None:
@@ -153,12 +101,7 @@ def test_queue_timings_follow_the_design_note() -> None:
     assert properties("DeadLetterQueue")["MessageRetentionPeriod"] == 14 * 24 * 60 * 60
 
 
-def test_every_queue_is_encrypted_with_sse_sqs() -> None:
-    queues = resources("AWS::SQS::Queue")
-
-    assert set(queues) == {"EventsQueue", "DeadLetterQueue"}
-    for name, queue in queues.items():
-        assert queue["Properties"]["SqsManagedSseEnabled"] is True, name
+# Wiring ---------------------------------------------------------------------------------
 
 
 def test_ingest_may_send_to_the_main_queue_and_nothing_else() -> None:
@@ -167,46 +110,11 @@ def test_ingest_may_send_to_the_main_queue_and_nothing_else() -> None:
     ]
 
 
-# 7-day log retention ---------------------------------------------------------------------
-
-
-def test_every_function_logs_to_a_7_day_group_the_stack_owns() -> None:
-    for name, props in functions().items():
-        group = template()["Resources"][props["LoggingConfig"]["LogGroup"]["Ref"]]
-        assert group["Type"] == "AWS::Logs::LogGroup", name
-        assert group["Properties"]["RetentionInDays"] == 7, name
-        assert {group.get("DeletionPolicy"), group.get("UpdateReplacePolicy")} <= {None, "Delete"}
-
-
 def test_each_log_group_is_named_after_its_function() -> None:
     for props in functions().values():
         group = properties(props["LoggingConfig"]["LogGroup"]["Ref"])
         function_name = props["FunctionName"]["Fn::Sub"]
         assert group["LogGroupName"] == {"Fn::Sub": f"/aws/lambda/{function_name}"}
-
-
-# No VPC, no NAT gateway --------------------------------------------------------------------
-
-
-def test_nothing_runs_in_a_vpc() -> None:
-    assert "VpcConfig" not in set(keys(template()))
-    assert not [r for r in resources().values() if r["Type"].startswith("AWS::EC2::")]
-
-
-# Tags ----------------------------------------------------------------------------------------
-
-
-def test_everything_is_tagged_for_cost_tracking() -> None:
-    for kind in ("Function", "HttpApi"):
-        settings = template()["Globals"][kind]
-        assert settings["Tags"] == {"project": "webhook-gateway"}, kind
-        assert settings["PropagateTags"] is True, kind
-    for name, resource in resources().items():
-        if not resource["Type"].startswith("AWS::Serverless::"):  # those get Globals' tags
-            assert TAG in resource["Properties"]["Tags"], name
-
-
-# Settings, handlers and outputs --------------------------------------------------------------
 
 
 def test_every_function_gets_every_setting() -> None:
