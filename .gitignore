@@ -30,6 +30,9 @@ env/
 .aws/
 .aws-sam/
 
+# Written by make build from poetry.lock: the lock file is the source of truth
+src/requirements.txt
+
 # Private keys and certificates
 *.pem
 *.key

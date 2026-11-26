@@ -18,6 +18,13 @@ PYTEST_ARGS ?=
 # Arguments for make generate, e.g. GENERATE_ARGS="--provider stripe --count 5".
 GENERATE_ARGS ?=
 
+# Extra arguments for sam build, e.g. make build SAM_BUILD_ARGS=--use-container.
+SAM_BUILD_ARGS ?=
+# Design note section 13: one region for everything.
+REGION := eu-west-2
+# SAM CLI sends usage metrics unless told not to: off for every recipe, here and in CI.
+export SAM_CLI_TELEMETRY := 0
+
 
 # The first line of every recipe that talks to AWS. STAGE and AWS_PROFILE must
 # be given on the make command line and not be empty. Values exported in your
@@ -83,3 +90,14 @@ schema:
 ## Print signed synthetic webhooks as JSON Lines; needs SIGNING_SECRET (GENERATE_ARGS="--provider stripe").
 generate:
 	@$(RUN) python -m webhook_gateway.synthetic.cli $(GENERATE_ARGS)
+
+.PHONY: validate
+## Check template.yaml with SAM's translator and cfn-lint; needs no AWS account.
+validate:
+	sam validate --lint --region $(REGION)
+
+.PHONY: build
+## Bundle each function into .aws-sam/ (needs python3.14 on PATH, or SAM_BUILD_ARGS=--use-container).
+build:
+	poetry export --only main --format requirements.txt --output src/requirements.txt
+	sam build $(SAM_BUILD_ARGS)

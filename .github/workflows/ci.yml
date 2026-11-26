@@ -24,6 +24,10 @@ jobs:
       - name: Install Poetry
         run: pipx install poetry==2.5.1
 
+      # sam build uses the python3.14 that setup-python puts on PATH below.
+      - name: Install SAM CLI
+        run: pipx install aws-sam-cli==1.174.1
+
       - name: Set up Python from .python-version and cache the Poetry venv
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
@@ -39,6 +43,8 @@ jobs:
       - run: make install
       - run: make scan-secrets
       - run: make check
+      - run: make validate
+      - run: make build
 
       - name: Upload the coverage report
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

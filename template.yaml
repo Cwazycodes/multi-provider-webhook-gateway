@@ -1,0 +1,114 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Multi-provider webhook gateway (docs/design.md). One stack per stage.
+
+Parameters:
+  Stage:
+    Type: String
+    Default: dev
+    AllowedPattern: "^[a-z][a-z0-9-]*$"
+  # Cost caps (design note sections 9 and 12). The load test raises them for one run.
+  IngestConcurrency:
+    Type: Number
+    Default: 10
+    MinValue: 1
+  ThrottleRate:
+    Type: Number
+    Default: 20
+    MinValue: 1
+  ThrottleBurst:
+    Type: Number
+    Default: 40
+    MinValue: 1
+
+Globals:
+  Function:
+    Runtime: python3.14
+    Architectures: [arm64]  # cheaper per GB-second than x86
+    MemorySize: 256
+    Timeout: 5
+    PropagateTags: true
+    Tags:
+      project: webhook-gateway
+    Environment:
+      # Every field of common/settings.py; tests/test_template.py keeps them in step.
+      Variables:
+        STAGE: !Ref Stage
+        PARAMETER_PATH: !Sub /webhook-gateway/${Stage}
+        QUEUE_URL: !Ref EventsQueue
+        DEAD_LETTER_QUEUE_URL: !Ref DeadLetterQueue
+        # The processor's table and bucket arrive in later tickets, with these names.
+        TABLE_NAME: !Sub webhook-gateway-${Stage}
+        ARCHIVE_BUCKET: !Sub webhook-gateway-${Stage}-archive-${AWS::AccountId}
+  HttpApi:
+    PropagateTags: true
+    Tags:
+      project: webhook-gateway
+
+Resources:
+  # An HTTP API, not a REST API: cheaper per request, and enough for one route.
+  WebhookApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      FailOnWarnings: true
+      DefaultRouteSettings:
+        ThrottlingRateLimit: !Ref ThrottleRate
+        ThrottlingBurstLimit: !Ref ThrottleBurst
+
+  IngestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub webhook-gateway-${Stage}-ingest
+      Description: Verifies, normalises and queues one webhook, then answers 202.
+      CodeUri: src/
+      Handler: webhook_gateway.ingest.handler.handler
+      ReservedConcurrentExecutions: !Ref IngestConcurrency
+      LoggingConfig:
+        LogGroup: !Ref IngestLogGroup
+      Policies:
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt EventsQueue.QueueName
+      Events:
+        Webhook:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref WebhookApi
+            Method: POST
+            Path: /webhooks/{provider}
+            PayloadFormatVersion: "2.0"
+
+  # Declared here, not left to Lambda: retention is set, and the group goes with the stack.
+  IngestLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/webhook-gateway-${Stage}-ingest
+      RetentionInDays: 7
+      Tags:
+        - Key: project
+          Value: webhook-gateway
+
+  EventsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub webhook-gateway-${Stage}-events
+      VisibilityTimeout: 180  # at least six times the processor's 30-second timeout
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt DeadLetterQueue.Arn
+        maxReceiveCount: 5
+      Tags:
+        - Key: project
+          Value: webhook-gateway
+
+  DeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub webhook-gateway-${Stage}-dlq
+      MessageRetentionPeriod: 1209600  # 14 days to notice, fix and replay
+      SqsManagedSseEnabled: true
+      Tags:
+        - Key: project
+          Value: webhook-gateway
+
+# No Outputs: `sam deploy` prints them, and the endpoint URL must stay out of CI logs
+# (design note section 10). Tools read it from the stack when they need it.
