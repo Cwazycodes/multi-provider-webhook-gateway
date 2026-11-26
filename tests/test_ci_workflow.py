@@ -61,7 +61,21 @@ def test_required_check_keeps_its_name() -> None:
 
 def test_required_check_runs_the_make_targets_in_order() -> None:
     make_runs = [step["run"] for step in steps() if step.get("run", "").startswith("make ")]
-    assert make_runs == ["make install", "make scan-secrets", "make check"]
+    assert make_runs == [
+        "make install",
+        "make scan-secrets",
+        "make check",
+        "make validate",
+        "make build",
+    ]
+
+
+def test_sam_cli_is_a_pinned_version_installed_before_validate() -> None:
+    runs = [step.get("run", "") for step in steps()]
+    install = next(i for i, run in enumerate(runs) if run.startswith("pipx install aws-sam-cli"))
+
+    assert re.fullmatch(r"pipx install aws-sam-cli==\d+\.\d+\.\d+", runs[install])
+    assert install < runs.index("make validate")
 
 
 def test_checkout_gives_gitleaks_all_history_and_keeps_no_token() -> None:

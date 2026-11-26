@@ -21,6 +21,8 @@ REQUIRED_TARGETS = {
     "scan-secrets",
     "schema",
     "generate",
+    "validate",
+    "build",
 }
 
 # A parent make (`make test` runs pytest) exports these, and a shell may export
@@ -29,7 +31,7 @@ LEAKY_ENV = {"MAKEFLAGS", "MFLAGS", "MAKELEVEL", "STAGE", "AWS_PROFILE"}
 
 # Test-only targets, loaded next to the real Makefile so it needs no fakes.
 PROBES = """
-.PHONY: probe-pipefail probe-unset aws-probe
+.PHONY: probe-pipefail probe-unset aws-probe probe-telemetry
 probe-pipefail:
 \tfalse | true
 probe-unset:
@@ -37,6 +39,8 @@ probe-unset:
 aws-probe:
 \t$(require-aws)
 \t@echo "would reach AWS: $(STAGE) as $(AWS_PROFILE)"
+probe-telemetry:
+\t@echo "telemetry=$$SAM_CLI_TELEMETRY"
 """
 
 
@@ -137,3 +141,40 @@ def test_test_target_writes_the_coverage_xml_ci_uploads() -> None:
 
     assert dry_run.returncode == 0, dry_run.stderr
     assert "--cov-report=xml" in dry_run.stdout
+
+
+def test_validate_lints_with_cfn_lint_and_needs_no_aws_account() -> None:
+    dry_run = run_make("--dry-run", "validate")
+
+    assert dry_run.returncode == 0, dry_run.stderr
+    assert dry_run.stdout == "sam validate --lint --region eu-west-2\n"
+
+
+def test_build_exports_the_runtime_dependencies_then_runs_sam_build() -> None:
+    dry_run = run_make("--dry-run", "build")
+
+    assert dry_run.returncode == 0, dry_run.stderr
+    assert [line.strip() for line in dry_run.stdout.splitlines()] == [
+        "poetry export --only main --format requirements.txt --output src/requirements.txt",
+        "sam build",
+    ]
+
+
+def test_build_can_use_a_container_instead_of_a_local_python() -> None:
+    dry_run = run_make("--dry-run", "build", "SAM_BUILD_ARGS=--use-container")
+
+    assert "sam build --use-container" in dry_run.stdout
+
+
+def test_sam_telemetry_is_off_for_every_recipe(probes: Path) -> None:
+    result = run_make("probe-telemetry", probes=probes, env={"SAM_CLI_TELEMETRY": "1"})
+
+    assert result.stdout.strip() == "telemetry=0"
+
+
+def test_the_exported_requirements_are_never_committed() -> None:
+    ignored = subprocess.run(
+        ["git", "check-ignore", "--quiet", "src/requirements.txt"], cwd=ROOT, check=False
+    )
+
+    assert ignored.returncode == 0
