@@ -26,6 +26,11 @@ from webhook_gateway.providers.signatures import SignedRequest, signed_by_any
 
 HEADER = "X-Hub-Signature-256"
 
+# Kept with the raw body on the queue and in the archive (lowercased). Never a signature.
+ARCHIVED_HEADERS = frozenset(
+    {"content-type", "user-agent", "x-github-delivery", "x-github-event", "x-github-hook-id"}
+)
+
 
 class GitHubVerifier:
     def verify(self, request: SignedRequest, secrets: Sequence[str], now: datetime) -> None:

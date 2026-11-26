@@ -26,6 +26,20 @@ from webhook_gateway.providers.normalising import (
 from webhook_gateway.providers.signatures import SignedRequest, signed_by_any
 
 HEADER = "X-Shopify-Hmac-Sha256"
+
+# Kept with the raw body on the queue and in the archive (lowercased). Never a signature.
+ARCHIVED_HEADERS = frozenset(
+    {
+        "content-type",
+        "x-shopify-api-version",
+        "x-shopify-event-id",
+        "x-shopify-shop-domain",
+        "x-shopify-topic",
+        "x-shopify-triggered-at",
+        "x-shopify-webhook-id",
+    }
+)
+
 EVENT_TYPES = {"orders/create": EventType.ORDER_CREATED, "orders/paid": EventType.ORDER_PAID}
 
 # Shopify sends money as decimal strings; they stay strings, so nothing is rounded.
