@@ -22,6 +22,10 @@ from webhook_gateway.providers.normalising import (
 from webhook_gateway.providers.signatures import SignedRequest, signed_by_any
 
 HEADER = "Stripe-Signature"
+
+# Kept with the raw body on the queue and in the archive (lowercased). Never a signature.
+ARCHIVED_HEADERS = frozenset({"content-type", "user-agent"})
+
 # ASCII digits only: int() would also take "1_763", "+1763", " 1763" and other scripts' digits.
 _SECONDS = re.compile(r"[0-9]+")
 PAYMENT_INTENT_TYPES = {
