@@ -19,6 +19,8 @@ from pydantic import (
     model_validator,
 )
 
+from webhook_gateway.common.clock import utc_text
+
 
 class Provider(StrEnum):
     GITHUB = "github"
@@ -47,15 +49,10 @@ def _to_utc(moment: datetime) -> datetime:
         raise ValueError("is outside the range of a UTC datetime") from None
 
 
-def _fixed_width(moment: datetime) -> str:
-    # Always microseconds and "Z", so serialised timestamps sort as the instants do.
-    return moment.replace(tzinfo=None).isoformat(timespec="microseconds") + "Z"
-
-
 UtcDatetime = Annotated[
     AwareDatetime,
     AfterValidator(_to_utc),
-    PlainSerializer(_fixed_width, return_type=str, when_used="json"),
+    PlainSerializer(utc_text, return_type=str, when_used="json"),  # sorts as the instants do
 ]
 NonEmptyStr = Annotated[str, StringConstraints(min_length=1)]
 
