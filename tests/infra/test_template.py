@@ -2,6 +2,7 @@
 
 import importlib
 import json
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,7 @@ import pytest
 from cfnlint.decode import decode_str
 
 from webhook_gateway.common.settings import Settings
+from webhook_gateway.processor.idempotency import LOCK
 
 ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE = ROOT / "template.yaml"
@@ -89,6 +91,32 @@ def test_ingest_reserves_10_concurrent_executions() -> None:
     assert default(functions()["IngestFunction"]["ReservedConcurrentExecutions"]) == 10
 
 
+def test_the_processor_gets_30_seconds_on_256_mb() -> None:
+    assert functions()["ProcessorFunction"]["Timeout"] == 30
+    assert "MemorySize" not in functions()["ProcessorFunction"]
+
+
+def test_the_processor_reads_batches_of_10_with_no_batching_window() -> None:
+    source = functions()["ProcessorFunction"]["Events"]["Batches"]["Properties"]
+
+    assert (source["BatchSize"], source["MaximumBatchingWindowInSeconds"]) == (10, 0)
+
+
+def test_the_processor_runs_at_most_5_at_once_both_reserved_and_from_the_queue() -> None:
+    processor = functions()["ProcessorFunction"]
+    scaling = processor["Events"]["Batches"]["Properties"]["ScalingConfig"]
+
+    assert default(processor["ReservedConcurrentExecutions"]) == 5
+    assert scaling["MaximumConcurrency"] == processor["ReservedConcurrentExecutions"]
+
+
+def test_the_queue_and_the_claim_lock_both_outlast_the_processor() -> None:
+    timeout = timedelta(seconds=functions()["ProcessorFunction"]["Timeout"])
+
+    assert timedelta(seconds=properties("EventsQueue")["VisibilityTimeout"]) >= 6 * timeout
+    assert timeout < LOCK  # a live invocation never loses its claim
+
+
 def test_the_main_queue_moves_a_message_to_the_dlq_after_5_receives() -> None:
     assert properties("EventsQueue")["RedrivePolicy"] == {
         "deadLetterTargetArn": {"Fn::GetAtt": ["DeadLetterQueue", "Arn"]},
@@ -132,6 +160,30 @@ def test_point_in_time_recovery_is_off_until_production() -> None:
 def test_ingest_may_send_to_the_main_queue_and_nothing_else() -> None:
     assert functions()["IngestFunction"]["Policies"] == [
         {"SQSSendMessagePolicy": {"QueueName": {"Fn::GetAtt": ["EventsQueue", "QueueName"]}}}
+    ]
+
+
+def test_the_processor_is_fed_by_the_main_queue_and_reports_partial_failures() -> None:
+    source = functions()["ProcessorFunction"]["Events"]["Batches"]
+
+    assert source["Type"] == "SQS"
+    assert source["Properties"]["Queue"] == {"Fn::GetAtt": ["EventsQueue", "Arn"]}
+    assert source["Properties"]["FunctionResponseTypes"] == ["ReportBatchItemFailures"]
+
+
+def test_the_processor_may_write_the_table_and_send_to_the_dlq_and_nothing_else() -> None:
+    assert functions()["ProcessorFunction"]["Policies"] == [
+        {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Action": ["dynamodb:PutItem", "dynamodb:UpdateItem"],
+                    "Resource": {"Fn::GetAtt": ["EventsTable", "Arn"]},
+                }
+            ],
+        },
+        {"SQSSendMessagePolicy": {"QueueName": {"Fn::GetAtt": ["DeadLetterQueue", "QueueName"]}}},
     ]
 
 

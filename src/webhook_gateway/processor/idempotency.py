@@ -10,7 +10,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from botocore.exceptions import ClientError
 
@@ -47,6 +47,13 @@ class Outcome(StrEnum):
     UNHANDLED = "unhandled"
 
 
+class Run(NamedTuple):
+    """What run_once did: the claim it found and, if it applied the event, the outcome."""
+
+    claim: Claim
+    outcome: Outcome | None = None
+
+
 def epoch(moment: datetime) -> int:
     """Whole seconds since 1970: what DynamoDB's TTL reads, and what locks are compared in."""
     return int(moment.timestamp())
@@ -60,16 +67,18 @@ class EventRecords:
     table_name: str
     clock: Callable[[], datetime] = utc_now
 
-    def run_once(self, envelope: Envelope, apply: Callable[[Envelope], Outcome]) -> Claim:
+    def run_once(self, envelope: Envelope, apply: Callable[[Envelope], Outcome]) -> Run:
         """Claim, apply, complete: `apply` runs only while this invocation holds the claim.
 
         If `apply` raises, the record stays PROCESSING, and once its lock expires the
         next delivery takes it over.
         """
         claim = self.claim(envelope)
-        if claim in (Claim.CLAIMED, Claim.TAKEN_OVER):
-            self.complete(envelope, apply(envelope))
-        return claim
+        if claim not in (Claim.CLAIMED, Claim.TAKEN_OVER):
+            return Run(claim)
+        outcome = apply(envelope)
+        self.complete(envelope, outcome)
+        return Run(claim, outcome)
 
     def claim(self, envelope: Envelope) -> Claim:
         now = self.clock()

@@ -20,6 +20,11 @@ Parameters:
     Type: Number
     Default: 40
     MinValue: 1
+  # Caps both the processor's reserved concurrency and how many the queue may run at once.
+  ProcessorConcurrency:
+    Type: Number
+    Default: 5
+    MinValue: 2  # the least an SQS event source's MaximumConcurrency accepts
 
 Globals:
   Function:
@@ -86,7 +91,47 @@ Resources:
       Tags:
         - Key: project
           Value: webhook-gateway
+  ProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub webhook-gateway-${Stage}-processor
+      Description: Claims, applies and completes each event of an SQS batch.
+      CodeUri: src/
+      Handler: webhook_gateway.processor.handler.handler
+      Timeout: 30  # a batch is at most 10 messages of key-based writes
+      ReservedConcurrentExecutions: !Ref ProcessorConcurrency
+      LoggingConfig:
+        LogGroup: !Ref ProcessorLogGroup
+      Policies:
+        # The claim, its takeover and completion, and the subject update. Nothing reads.
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: [dynamodb:PutItem, dynamodb:UpdateItem]
+              Resource: !GetAtt EventsTable.Arn
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt DeadLetterQueue.QueueName
+      Events:
+        Batches:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt EventsQueue.Arn
+            BatchSize: 10
+            MaximumBatchingWindowInSeconds: 0
+            # The handler names the messages to retry; the rest of the batch is deleted.
+            FunctionResponseTypes: [ReportBatchItemFailures]
+            ScalingConfig:
+              MaximumConcurrency: !Ref ProcessorConcurrency
 
+  ProcessorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/webhook-gateway-${Stage}-processor
+      RetentionInDays: 7
+      Tags:
+        - Key: project
+          Value: webhook-gateway
+          
   EventsQueue:
     Type: AWS::SQS::Queue
     Properties:

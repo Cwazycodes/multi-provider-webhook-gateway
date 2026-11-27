@@ -14,16 +14,12 @@ import pytest
 from botocore.config import Config
 from mypy_boto3_sqs.type_defs import MessageTypeDef
 
+from webhook_gateway.common.clients import make_sqs_client
 from webhook_gateway.common.envelope import EventType, Provider
 from webhook_gateway.common.log import make_logger
 from webhook_gateway.common.message import QueueMessage
 from webhook_gateway.common.settings import Settings
-from webhook_gateway.ingest.handler import (
-    MAX_BODY_BYTES,
-    Ingest,
-    create_ingest,
-    make_sqs_client,
-)
+from webhook_gateway.ingest.handler import MAX_BODY_BYTES, Ingest, create_ingest
 from webhook_gateway.ingest.secrets import CachedSecrets, StaticSecrets
 from webhook_gateway.providers.registry import PROVIDERS
 from webhook_gateway.synthetic.formats import apigw_event
@@ -307,13 +303,6 @@ def test_an_unreachable_queue_is_503_too(ingest: Ingest, signing_secret: str) ->
     response = offline.handle(apigw_event(delivery(Provider.STRIPE, signing_secret)))
 
     assert answer(response) == (503, {"error": "try_again"})
-
-
-def test_the_sqs_client_retries_in_standard_mode_three_attempts_in_all(aws: None) -> None:
-    # Config(retries={"max_attempts": 3}) would mean three *retries*: four attempts.
-    config = make_sqs_client().meta.config
-    # botocore sets retries at runtime, and its type stubs don't declare it.
-    assert config.retries == {"mode": "standard", "total_max_attempts": 3}  # type: ignore[attr-defined]
 
 
 def test_no_secrets_configured_is_the_gateways_own_fault(

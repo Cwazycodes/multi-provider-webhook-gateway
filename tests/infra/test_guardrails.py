@@ -426,7 +426,8 @@ def test_each_rule_accepts_what_it_asks_for(rule_id: str, template: dict[str, An
 
 
 def test_a_failure_points_at_the_line_in_template_yaml() -> None:
-    text = TEMPLATE.read_text().replace("RetentionInDays: 7", "RetentionInDays: 14")
+    # Only the first log group's retention, IngestLogGroup's: the processor's stays at 7.
+    text = TEMPLATE.read_text().replace("RetentionInDays: 7", "RetentionInDays: 14", 1)
     line = next(n for n, row in enumerate(text.splitlines(), 1) if row == "  IngestLogGroup:")
 
     assert broken(BY_ID["seven-day-logs"], load(text)) == [

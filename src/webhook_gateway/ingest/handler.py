@@ -8,11 +8,10 @@ from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-import boto3
 from aws_lambda_powertools import Logger
-from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 
+from webhook_gateway.common.clients import make_sqs_client
 from webhook_gateway.common.clock import utc_now
 from webhook_gateway.common.envelope import Envelope, Provider
 from webhook_gateway.common.errors import (
@@ -113,12 +112,6 @@ def _response(status: HTTPStatus, body: Mapping[str, str]) -> dict[str, Any]:
         "headers": {"content-type": "application/json"},
         "body": json.dumps(dict(body)),
     }
-
-
-def make_sqs_client() -> SQSClient:
-    # Design note section 9: standard mode, 3 attempts in all. Config's max_attempts
-    # would count retries after the first try, so it would mean 4.
-    return boto3.client("sqs", config=Config(retries={"mode": "standard", "total_max_attempts": 3}))
 
 
 def create_ingest(settings: Settings, secrets: SecretSource) -> Ingest:
