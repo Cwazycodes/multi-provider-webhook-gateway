@@ -5,21 +5,18 @@ clock. Every envelope() is a fresh delivery of the same event: a new event_id, o
 """
 
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 import boto3
 import pytest
 from botocore.exceptions import ClientError
-from cfnlint.decode import decode_str
 from mypy_boto3_dynamodb import DynamoDBClient
 
 from webhook_gateway.common.envelope import Envelope, EventType, Provider
-from webhook_gateway.processor.idempotency import Claim, EventRecords, Outcome
+from webhook_gateway.processor.idempotency import Claim, EventRecords, Outcome, Run
 
-TEMPLATE = Path(__file__).resolve().parents[2] / "template.yaml"
-TABLE = "webhook-gateway-test"
+TABLE = "webhook-gateway-test"  # the table conftest.py makes
 START = datetime(2026, 11, 17, 10, 0, 0, tzinfo=UTC)
 LOCK = timedelta(seconds=60)  # design note section 9; the module's constant isn't trusted here
 
@@ -45,26 +42,6 @@ class Step:
         if self.crash:
             raise RuntimeError("the processor died mid-apply")
         return self.outcome
-
-
-def the_templates_table() -> dict[str, Any]:
-    decoded, matches = decode_str(TEMPLATE.read_text())
-    assert decoded is not None, matches
-    properties: dict[str, Any] = decoded["Resources"]["EventsTable"]["Properties"]
-    return properties
-
-
-@pytest.fixture
-def dynamodb(aws: None) -> DynamoDBClient:
-    client = boto3.client("dynamodb")
-    table = the_templates_table()
-    client.create_table(
-        TableName=TABLE,
-        KeySchema=table["KeySchema"],
-        AttributeDefinitions=table["AttributeDefinitions"],
-        BillingMode=table["BillingMode"],
-    )
-    return client
 
 
 @pytest.fixture
@@ -225,9 +202,9 @@ def test_completing_keeps_the_outcome_for_7_days_and_drops_the_lock(
 
 
 def test_the_record_expires_by_the_attribute_the_table_has_ttl_on(
-    worker: EventRecords, dynamodb: DynamoDBClient
+    worker: EventRecords, dynamodb: DynamoDBClient, events_table: dict[str, Any]
 ) -> None:
-    ttl = the_templates_table()["TimeToLiveSpecification"]
+    ttl = events_table["TimeToLiveSpecification"]
     worker.claim(first := envelope())
     worker.complete(first, Outcome.APPLIED)
 
@@ -241,9 +218,9 @@ def test_the_record_expires_by_the_attribute_the_table_has_ttl_on(
 def test_an_event_delivered_five_times_is_applied_once(worker: EventRecords) -> None:
     apply = Step()
 
-    claims = [worker.run_once(envelope(), apply) for _ in range(5)]
+    runs = [worker.run_once(envelope(), apply) for _ in range(5)]
 
-    assert claims == [Claim.CLAIMED] + [Claim.DUPLICATE] * 4
+    assert runs == [Run(Claim.CLAIMED, Outcome.APPLIED)] + [Run(Claim.DUPLICATE)] * 4
     assert apply.runs == 1
 
 
@@ -251,14 +228,16 @@ def test_a_delivery_that_arrives_mid_apply_never_applies_it(
     worker: EventRecords, other_worker: EventRecords, dynamodb: DynamoDBClient
 ) -> None:
     second_apply = Step()
-    seen: list[Claim] = []
+    seen: list[Run] = []
 
     def apply_while_another_delivery_arrives(event: Envelope) -> Outcome:
         seen.append(other_worker.run_once(envelope(), second_apply))
         return Outcome.APPLIED
 
-    assert worker.run_once(envelope(), apply_while_another_delivery_arrives) is Claim.CLAIMED
-    assert seen == [Claim.BUSY]
+    run = worker.run_once(envelope(), apply_while_another_delivery_arrives)
+
+    assert run == Run(Claim.CLAIMED, Outcome.APPLIED)
+    assert seen == [Run(Claim.BUSY)]
     assert second_apply.runs == 0
     assert record(dynamodb)["status"] == {"S": "COMPLETED"}
 
@@ -273,18 +252,17 @@ def test_after_a_crash_the_event_is_applied_once_the_lock_expires(
     with pytest.raises(RuntimeError):
         worker.run_once(envelope(), Step(crash=True))
 
-    assert other_worker.run_once(envelope(), apply) is Claim.BUSY
+    assert other_worker.run_once(envelope(), apply) == Run(Claim.BUSY)
     clock.now += LOCK
-    assert other_worker.run_once(envelope(), apply) is Claim.TAKEN_OVER
-    assert worker.run_once(envelope(), apply) is Claim.DUPLICATE
-    assert apply.runs == 1
-    assert record(dynamodb)["outcome"] == {"S": "applied"}
+    assert other_worker.run_once(envelope(), apply) == Run(Claim.TAKEN_OVER, Outcome.APPLIED)
+    assert worker.run_once(envelope(), apply) == Run(Claim.DUPLICATE)
 
 
 @pytest.mark.parametrize("outcome", list(Outcome))
 def test_the_record_keeps_what_applying_returned(
     worker: EventRecords, dynamodb: DynamoDBClient, outcome: Outcome
 ) -> None:
-    worker.run_once(envelope(), Step(outcome))
+    run = worker.run_once(envelope(), Step(outcome))
 
+    assert run == Run(Claim.CLAIMED, outcome)
     assert record(dynamodb)["outcome"] == {"S": outcome.value}
