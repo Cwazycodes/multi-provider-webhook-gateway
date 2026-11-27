@@ -101,6 +101,31 @@ def test_queue_timings_follow_the_design_note() -> None:
     assert properties("DeadLetterQueue")["MessageRetentionPeriod"] == 14 * 24 * 60 * 60
 
 
+# The table (design note section 8) -----------------------------------------------------
+
+
+def test_the_table_is_keyed_by_pk_alone_with_no_indexes() -> None:
+    table = properties("EventsTable")
+
+    assert table["KeySchema"] == [{"AttributeName": "pk", "KeyType": "HASH"}]
+    assert table["AttributeDefinitions"] == [{"AttributeName": "pk", "AttributeType": "S"}]
+    assert not {"GlobalSecondaryIndexes", "LocalSecondaryIndexes"} & set(table)
+
+
+def test_event_records_expire_by_ttl_on_expires_at() -> None:
+    assert properties("EventsTable")["TimeToLiveSpecification"] == {
+        "AttributeName": "expires_at",
+        "Enabled": True,
+    }
+
+
+def test_point_in_time_recovery_is_off_until_production() -> None:
+    # It bills per GB-month for backups nobody here needs. A production stack turns it on.
+    assert properties("EventsTable")["PointInTimeRecoverySpecification"] == {
+        "PointInTimeRecoveryEnabled": False
+    }
+
+
 # Wiring ---------------------------------------------------------------------------------
 
 
@@ -123,6 +148,7 @@ def test_every_function_gets_every_setting() -> None:
     assert set(variables) == {name.upper() for name in Settings.model_fields}
     assert variables["QUEUE_URL"] == {"Ref": "EventsQueue"}
     assert variables["DEAD_LETTER_QUEUE_URL"] == {"Ref": "DeadLetterQueue"}
+    assert variables["TABLE_NAME"] == {"Ref": "EventsTable"}
     assert variables["PARAMETER_PATH"] == {"Fn::Sub": "/webhook-gateway/${Stage}"}
 
 

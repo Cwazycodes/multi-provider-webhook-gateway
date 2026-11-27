@@ -151,15 +151,6 @@ RULES = [
         LOG_GROUPS,
         lambda r: r.properties.get("RetentionInDays") == 7,
     ),
-    Rule(
-        "logs-deleted-with-stack",
-        "every log group is deleted with the stack",
-        LOG_GROUPS,
-        lambda r: (
-            {r.attributes.get("DeletionPolicy"), r.attributes.get("UpdateReplacePolicy")}
-            <= {None, "Delete"}
-        ),
-    ),
     # API
     Rule(
         "http-api-only",
@@ -201,7 +192,7 @@ RULES = [
             and "KmsMasterKeyId" not in r.properties
         ),
     ),
-    # Storage: none yet; WG-15 adds the table and WG-17 the bucket
+    # Storage: the table arrived in WG-15, and WG-17 adds the bucket
     Rule(
         "on-demand-table",
         "every table bills on demand",
@@ -219,6 +210,16 @@ RULES = [
         "every bucket blocks all public access",
         BUCKETS,
         blocks_public_access,
+    ),
+    # make destroy leaves nothing behind (design note section 13)
+    Rule(
+        "deleted-with-stack",
+        "everything that holds data is deleted with the stack",
+        LOG_GROUPS | TABLES | BUCKETS,
+        lambda r: (
+            {r.attributes.get("DeletionPolicy"), r.attributes.get("UpdateReplacePolicy")}
+            <= {None, "Delete"}
+        ),
     ),
     # Cost tracking
     Rule(
@@ -319,9 +320,14 @@ BREAKS = [
         "seven-day-logs", one("AWS::Logs::LogGroup", {"RetentionInDays": 14}), id="logs-14-days"
     ),
     pytest.param(
-        "logs-deleted-with-stack",
+        "deleted-with-stack",
         one("AWS::Logs::LogGroup", LOG_GROUP, DeletionPolicy="Retain"),
         id="log-group-retained",
+    ),
+    pytest.param(
+        "deleted-with-stack",
+        one("AWS::DynamoDB::Table", {}, UpdateReplacePolicy="Retain"),
+        id="table-left-behind-on-replace",
     ),
     pytest.param("http-api-only", one("AWS::Serverless::Api", {}), id="sam-rest-api"),
     pytest.param("http-api-only", one("AWS::ApiGateway::RestApi", {}), id="rest-api"),

@@ -31,14 +31,14 @@ Globals:
     Tags:
       project: webhook-gateway
     Environment:
-      # Every field of common/settings.py; tests/test_template.py keeps them in step.
+      # Every field of common/settings.py; tests/infra/test_template.py keeps them in step.
       Variables:
         STAGE: !Ref Stage
         PARAMETER_PATH: !Sub /webhook-gateway/${Stage}
         QUEUE_URL: !Ref EventsQueue
         DEAD_LETTER_QUEUE_URL: !Ref DeadLetterQueue
-        # The processor's table and bucket arrive in later tickets, with these names.
-        TABLE_NAME: !Sub webhook-gateway-${Stage}
+        TABLE_NAME: !Ref EventsTable
+        # The archive bucket arrives in WG-17, with this name.
         ARCHIVE_BUCKET: !Sub webhook-gateway-${Stage}-archive-${AWS::AccountId}
   HttpApi:
     PropagateTags: true
@@ -110,5 +110,27 @@ Resources:
         - Key: project
           Value: webhook-gateway
 
+  # Event records and subject state (design note section 8). Every access is by key.
+  EventsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub webhook-gateway-${Stage}
+      BillingMode: PAY_PER_REQUEST  # nothing to pay when idle
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+      # Off to save cost while nothing here matters. A production stack would turn it on.
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: false
+      Tags:
+        - Key: project
+          Value: webhook-gateway
+          
 # No Outputs: `sam deploy` prints them, and the endpoint URL must stay out of CI logs
 # (design note section 10). Tools read it from the stack when they need it.
